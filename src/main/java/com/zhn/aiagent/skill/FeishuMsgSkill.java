@@ -1,4 +1,4 @@
-package com.ai.skill;
+package com.zhn.aiagent.skill;
 
 import com.zhn.aiagent.mcp.tool.FeishuMcpTool;
 import com.zhn.aiagent.skill.BaseSkill;
