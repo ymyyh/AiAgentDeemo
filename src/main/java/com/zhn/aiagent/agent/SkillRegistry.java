@@ -7,10 +7,8 @@ import java.util.List;
 
 @Component
 public class SkillRegistry {
-
     @Getter
     private final List<BaseSkill> skillList;
-
     public SkillRegistry(List<BaseSkill> skillList) {
         this.skillList = skillList;
     }
