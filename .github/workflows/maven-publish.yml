@@ -1,0 +1,106 @@
+name: Publish package to the Maven Central Repository and GitHub Packages
+on:
+  push:
+    branches:
+      - master
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env: # 定义工作流中的环境变量
+      APP_NAME: aiagent-deemo # 服务名称
+      SERVICE_PORT: 8080 # 服务运行的端口号  // [!code focus] // [!code warning]
+      RUNNING_ACTIVE: prod # Spring Boot 的运行环境 // [!code highlight] // [!code focus]
+      LOG_DIR: /home/app/aiagent-deemo/logs # 日志文件路径 // [!code highlight] // [!code focus]
+      CONFIG_DIR: /home/conf/aiagent-deemo # 配置文件路径 // [!code highlight] // [!code focus]
+      ACR_DOMAIN: crpi-eh17ftr3tyc2lrwq.cn-hangzhou.personal.cr.aliyuncs.com # Docker 镜像仓库域名（ACR 容器镜像服务域名） // [!code highlight] // [!code focus]
+      ACR_ZONE: aiagent-deemo # Docker 镜像的命名空间 // [!code highlight] // [!code focus]
+      VERSION: ${{ github.sha }} # Docker 镜像的版本 // [!code highlight] // [!code focus]
+      SHELL_RUN_DIR: /home/run # 运行脚本生成路径 // [!code highlight] // [!code focus]
+
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java for publishing to Maven Central Repository
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # 4. 登录到 Docker 注册表（以 Docker Hub 为例）
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 6. 构建并推送 Docker 镜像
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ymyyh/aiagent-deemo:latest
+
+      # login to ACR
+      - name: Login to Aliyun Container Registry (ACR)
+        uses: aliyun/acr-login@v1 # 使用阿里云镜像服务action
+        with:
+          login-server: crpi-eh17ftr3tyc2lrwq.cn-hangzhou.personal.cr.aliyuncs.com # 务必正确填写镜像容器服务的登录地址
+          region-id: cn-hangzhou # 务必正确填写镜像容器服务的登录地址
+          username: ${{ secrets.ALIYUN_DOCKER_REGISTER_USERNAME }} # 引用GitHub repo设置的镜像容器服务用户名
+          password: ${{ secrets.ALIYUN_DOCKER_REGISTER_PASSWORD }} # 引用GitHub repo设置的镜像容器服务密码
+
+      # build image and push to ACR
+      - name: Build and Push Docker Image to Aliyun Container Registry (ACR)
+        env:
+          IMAGE_TAG: ${{ github.sha }} # 用于标记容器版本号
+        run: |
+          docker build -t ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }} .
+          docker push ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }}
+
+      - name: Deploy to remote server # 部署到远程服务器
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ALIYUN_REMOTE_HOST }} # 远程服务器地址
+          username: ${{ secrets.ALIYUN_REMOTE_USER }} # SSH 用户名
+          password: ${{ secrets.ALIYUN_REMOTE_PASSWORD }} # SSH 密码
+          script: |
+            # 创建必要的目录
+            mkdir -p /home/run
+            mkdir -p ${{ env.LOG_DIR }}
+            mkdir -p ${{ env.CONFIG_DIR }}
+        
+            # 设置权限（根据需要调整）
+            chmod 755 /home/run
+            chmod 755 ${{ env.LOG_DIR }}
+            chmod 755 ${{ env.CONFIG_DIR }}
+            
+            docker pull  ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }}
+            
+            echo "==================== 生成启动命令脚本 ===================="
+            mkdir -p ${{ env.SHELL_RUN_DIR }}
+            START_SCRIPT="${{ env.SHELL_RUN_DIR }}/docker_run_${{ env.APP_NAME }}_${{ env.RUNNING_ACTIVE }}.sh"
+            cat > $START_SCRIPT <<EOL
+            #!/bin/bash
+              echo "==================== 停止旧应用容器 ===================="
+              docker stop ${{ env.APP_NAME }} || true
+              docker rm ${{ env.APP_NAME }} || true 
+              docker image prune -f
+              docker builder prune -f 
+              echo "==================== 启动应用容器 ===================="
+              docker run -itd \
+                --name ${{ env.APP_NAME }} \
+                --restart always \
+                -p ${{ env.SERVICE_PORT }}:${{ env.SERVICE_PORT }} \
+                -v ${{ env.LOG_DIR }}:/logs \
+                -v ${{ env.CONFIG_DIR }}:/config \
+                -e "SPRING_PROFILES_ACTIVE=${{ env.RUNNING_ACTIVE }}" \
+                ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }}
+            EOL
+            chmod +x $START_SCRIPT # 赋予脚本可执行权限
+            echo "启动脚本已生成：$START_SCRIPT"
+            echo "可以运行以下命令手动启动容器："
+            echo "bash $START_SCRIPT"
+            bash $START_SCRIPT # 执行生成的启动脚本
