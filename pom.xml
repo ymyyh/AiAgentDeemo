@@ -10,50 +10,21 @@
     </parent>
 
     <groupId>com.ai</groupId>
-    <artifactId>ai-agent-mcp-demo</artifactId>
+    <artifactId>AiAgentDeemo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>ai-agent-mcp-demo</name>
-    <description>AI Agent + MCP 完整落地模板工程</description>
+    <packaging>pom</packaging>
+    <name>AiAgentDeemo</name>
+    <description>AI Agent + MCP 微服务聚合工程</description>
+
+    <modules>
+        <module>AiAgent-core</module>
+        <module>AiAgent-mcp</module>
+    </modules>
 
     <properties>
         <java.version>21</java.version>
         <spring-ai.version>1.0.0-M6</spring-ai.version>
     </properties>
-
-    <dependencies>
-        <!-- Spring Web -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-
-        <!-- Spring AI 核心 -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
-            <version>${spring-ai.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.alibaba.fastjson2</groupId>
-            <artifactId>fastjson2</artifactId>
-            <version>2.0.51</version>
-        </dependency>
-
-        <!-- 工具类 -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-
-        <!-- 测试 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
 
     <dependencyManagement>
         <dependencies>
