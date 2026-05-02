@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     env: # 定义工作流中的环境变量
       APP_NAME: aiagent-deemo # 服务名称
-      SERVICE_PORT: 8080 # 服务运行的端口号  // [!code focus] // [!code warning]
+      SERVICE_PORT: 8081 # 服务运行的端口号  // [!code focus] // [!code warning]
       RUNNING_ACTIVE: prod # Spring Boot 的运行环境 // [!code highlight] // [!code focus]
       LOG_DIR: /home/app/aiagent-deemo/logs # 日志文件路径 // [!code highlight] // [!code focus]
       CONFIG_DIR: /home/conf/aiagent-deemo # 配置文件路径 // [!code highlight] // [!code focus]
