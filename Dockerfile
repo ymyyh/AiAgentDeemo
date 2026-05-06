@@ -1,9 +1,12 @@
-FROM openjdk:17-jdk-slim
+FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
-COPY target/ai-agent-stock-tushare-0.0.1-SNAPSHOT.jar app.jar
+ARG JAR_FILE
+ARG SERVICE_PORT=8080
 
-EXPOSE 8080
+COPY ${JAR_FILE} app.jar
+
+EXPOSE ${SERVICE_PORT}
 
 ENTRYPOINT ["java","-jar","app.jar"]
