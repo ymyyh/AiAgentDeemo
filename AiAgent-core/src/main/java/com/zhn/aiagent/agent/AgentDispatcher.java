@@ -39,6 +39,7 @@ public class AgentDispatcher {
         }
         for (BaseSkill skill : skillList) {
             if (skill.getSkillName().equals(skillName)) {
+                // .tools(mcpToolCallbackProvider.getToolCallbacks()) 这个语句会自动选择mcp方法并进行调用，支持串行调用、并行调用、多轮调用
                 return chatClient.prompt(skill.execute(userQuery))
                         .tools(mcpToolCallbackProvider.getToolCallbacks())
                         .call()
