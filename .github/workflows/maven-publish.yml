@@ -92,18 +92,7 @@ jobs:
           username: ${{ secrets.ALIYUN_REMOTE_USER }}
           password: ${{ secrets.ALIYUN_REMOTE_PASSWORD }}
           script: |
-            # ============================================
-            # 部署微服务 1：AiAgent-core (端口 8081)
-            # ============================================
-            docker pull ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
-            docker stop ${{ env.SERVICE1_NAME }} || true
-            docker rm ${{ env.SERVICE1_NAME }} || true
-            docker run -d \
-              --name ${{ env.SERVICE1_NAME }} \
-              --restart always \
-              -p ${{ env.SERVICE1_PORT }}:${{ env.SERVICE1_PORT }} \
-              -e SPRING_PROFILES_ACTIVE=${{ env.SERVICE1_ACTIVE }} \
-              ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
+            docker network create aiagent-net || true
 
             # ============================================
             # 部署微服务 2：AiAgent-mcp (端口 8082)
@@ -113,7 +102,23 @@ jobs:
             docker rm ${{ env.SERVICE2_NAME }} || true
             docker run -d \
               --name ${{ env.SERVICE2_NAME }} \
+              --network aiagent-net \
               --restart always \
               -p ${{ env.SERVICE2_PORT }}:${{ env.SERVICE2_PORT }} \
               -e SPRING_PROFILES_ACTIVE=${{ env.SERVICE2_ACTIVE }} \
               ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE2_NAME }}:${{ env.VERSION }}
+
+            # ============================================
+            # 部署微服务 1：AiAgent-core (端口 8081)
+            # ============================================
+            docker pull ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
+            docker stop ${{ env.SERVICE1_NAME }} || true
+            docker rm ${{ env.SERVICE1_NAME }} || true
+            docker run -d \
+              --name ${{ env.SERVICE1_NAME }} \
+              --network aiagent-net \
+              --restart always \
+              -p ${{ env.SERVICE1_PORT }}:${{ env.SERVICE1_PORT }} \
+              -e SPRING_PROFILES_ACTIVE=${{ env.SERVICE1_ACTIVE }} \
+              -e JAVA_TOOL_OPTIONS="-Dspring.ai.mcp.client.sse.connections.stock-mcp.url=http://${{ env.SERVICE2_NAME }}:${{ env.SERVICE2_PORT }}" \
+              ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
