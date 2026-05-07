@@ -5,7 +5,7 @@ name: 自动构建并部署双微服务(AiAgent-core + AiAgent-mcp)到阿里云E
 on:
   push:
     branches:
-      - master
+      - main
 
 # 任务定义
 jobs:
