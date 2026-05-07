@@ -120,5 +120,6 @@ jobs:
               --restart always \
               -p ${{ env.SERVICE1_PORT }}:${{ env.SERVICE1_PORT }} \
               -e SPRING_PROFILES_ACTIVE=${{ env.SERVICE1_ACTIVE }} \
+              -e ALIQIANWEN_PLUS_API_KEY="${{ secrets.ALIQIANWEN_PLUS_API_KEY }}" \
               -e JAVA_TOOL_OPTIONS="-Dspring.ai.mcp.client.sse.connections.stock-mcp.url=http://${{ env.SERVICE2_NAME }}:${{ env.SERVICE2_PORT }}" \
               ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
