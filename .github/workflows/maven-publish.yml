@@ -14,27 +14,27 @@ jobs:
 
     # ==========================
     # 【全局环境变量配置】
-    # 所有固定参数统一在这里配置，方便修改
     # ==========================
     env:
       # ========== 阿里云ACR镜像仓库统一配置 ==========
-      ACR_DOMAIN: crpi-eh17ftr3tyc2lrwq.cn-hangzhou.personal.cr.aliyuncs.com  # ACR实例地址
-      ACR_NAMESPACE: aiagent-deemo                                            # 命名空间（你提供的）
-      VERSION: ${{ github.sha }}                                              # 镜像版本=git提交号（唯一标识）
+      ACR_DOMAIN: crpi-eh17ftr3tyc2lrwq.cn-hangzhou.personal.cr.aliyuncs.com
+      ACR_NAMESPACE: aiagent-deemo
+      VERSION: ${{ github.sha }}
 
       # ========== 微服务1：AiAgent-core 配置 ==========
-      SERVICE1_NAME: aiagent-core       # 镜像仓库名称（你提供的）
-      SERVICE1_PORT: 8081               # 服务运行端口
-      SERVICE1_ACTIVE: prod            # SpringBoot环境：prod
-      SERVICE1_MODULE: AiAgent-core    # 项目中的模块文件夹名称（必须正确）
+      SERVICE1_NAME: aiagent-core
+      SERVICE1_PORT: 8081
+      SERVICE1_ACTIVE: prod
+      SERVICE1_MODULE: AiAgent-core
+      SERVICE1_JAR: AiAgent-core-0.0.1-SNAPSHOT.jar
 
       # ========== 微服务2：AiAgent-mcp 配置 ==========
-      SERVICE2_NAME: aiagent-mcp       # 镜像仓库名称（你提供的）
-      SERVICE2_PORT: 8082               # 服务运行端口
-      SERVICE2_ACTIVE: prod            # SpringBoot环境：prod
-      SERVICE2_MODULE: AiAgent-mcp    # 项目中的模块文件夹名称（必须正确）
+      SERVICE2_NAME: aiagent-mcp
+      SERVICE2_PORT: 8082
+      SERVICE2_ACTIVE: prod
+      SERVICE2_MODULE: AiAgent-mcp
+      SERVICE2_JAR: AiAgent-mcp-0.0.1-SNAPSHOT.jar
 
-    # 权限配置
     permissions:
       contents: read
 
@@ -42,80 +42,64 @@ jobs:
     # 流水线执行步骤
     # ==========================
     steps:
-      # 步骤1：拉取项目代码到构建机器
-      - name: 拉取代码
+      # 步骤1：拉取代码
+      - name: 拉取项目代码
         uses: actions/checkout@v4
 
-      # 步骤2：配置Java 21环境（SpringBoot需要）
+      # 步骤2：配置JDK 21
       - name: 设置JDK 21环境
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # 步骤3：登录阿里云容器镜像服务ACR
-      # 作用：只有登录后才能推送镜像到阿里云私有仓库
+      # 步骤3：Maven打包所有模块（生成jar）
+      - name: Maven打包所有微服务
+        run: mvn clean package -DskipTests
+
+      # 步骤4：登录阿里云ACR
       - name: 登录阿里云ACR镜像仓库
         uses: aliyun/acr-login@v1
         with:
           login-server: ${{ env.ACR_DOMAIN }}
           region-id: cn-hangzhou
-          username: ${{ secrets.ALIYUN_DOCKER_REGISTER_USERNAME }}  # GitHub密钥中配置的ACR用户名
-          password: ${{ secrets.ALIYUN_DOCKER_REGISTER_PASSWORD }}  # GitHub密钥中配置的ACR密码
+          username: ${{ secrets.ALIYUN_DOCKER_REGISTER_USERNAME }}
+          password: ${{ secrets.ALIYUN_DOCKER_REGISTER_PASSWORD }}
 
       # ==========================
-      # 【微服务1：AiAgent-core 构建 + 推送镜像】
-      # 1. 进入模块目录
-      # 2. 构建Docker镜像
-      # 3. 推送到阿里云ACR
+      # 构建微服务1：AiAgent-core
       # ==========================
-      - name: 构建并推送微服务1：AiAgent-core
+      - name: 构建并推送微服务1：aiagent-core
         run: |
-          cd ${{ env.SERVICE1_MODULE }}        # 进入AiAgent-core模块目录
-          docker build -t ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }} .
+          docker build \
+            --build-arg JAR_PATH=${{ env.SERVICE1_MODULE }}/target/${{ env.SERVICE1_JAR }} \
+            -t ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }} .
           docker push ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
 
       # ==========================
-      # 【微服务2：AiAgent-mcp 构建 + 推送镜像】
-      # 逻辑同上，构建第二个服务
+      # 构建微服务2：AiAgent-mcp
       # ==========================
-      - name: 构建并推送微服务2：AiAgent-mcp
+      - name: 构建并推送微服务2：aiagent-mcp
         run: |
-          cd ${{ env.SERVICE2_MODULE }}        # 进入AiAgent-mcp模块目录
-          docker build -t ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE2_NAME }}:${{ env.VERSION }} .
+          docker build \
+            --build-arg JAR_PATH=${{ env.SERVICE2_MODULE }}/target/${{ env.SERVICE2_JAR }} \
+            -t ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE2_NAME }}:${{ env.VERSION }} .
           docker push ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE2_NAME }}:${{ env.VERSION }}
 
       # ==========================
-      # 【部署到阿里云ECS服务器】
-      # 通过SSH远程连接服务器，执行部署命令
-      # 1. 拉取最新镜像
-      # 2. 停止旧容器
-      # 3. 启动新容器
+      # 部署到ECS服务器
       # ==========================
-      - name: 部署双微服务到阿里云ECS服务器
+      - name: 部署双微服务到阿里云ECS
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.ALIYUN_REMOTE_HOST }}        # 服务器IP
-          username: ${{ secrets.ALIYUN_REMOTE_USER }}    # 服务器用户名
-          password: ${{ secrets.ALIYUN_REMOTE_PASSWORD }}# 服务器密码
-
-          # ==========================
-          # 服务器上执行的部署脚本
-          # ==========================
+          host: ${{ secrets.ALIYUN_REMOTE_HOST }}
+          username: ${{ secrets.ALIYUN_REMOTE_USER }}
+          password: ${{ secrets.ALIYUN_REMOTE_PASSWORD }}
           script: |
-            # ==============================================
-            # 部署微服务1：AiAgent-core（端口8081）
-            # ==============================================
-            echo "========== 开始部署：${{ env.SERVICE1_NAME }} =========="
-            
-            # 拉取最新镜像
+            # 部署服务1
             docker pull ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
-            
-            # 停止并删除旧容器（如果存在）
             docker stop ${{ env.SERVICE1_NAME }} || true
             docker rm ${{ env.SERVICE1_NAME }} || true
-            
-            # 启动新容器
             docker run -d \
               --name ${{ env.SERVICE1_NAME }} \
               --restart always \
@@ -123,21 +107,13 @@ jobs:
               -e SPRING_PROFILES_ACTIVE=${{ env.SERVICE1_ACTIVE }} \
               ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE1_NAME }}:${{ env.VERSION }}
 
-            # ==============================================
-            # 部署微服务2：AiAgent-mcp（端口8082）
-            # ==============================================
-            echo "========== 开始部署：${{ env.SERVICE2_NAME }} =========="
-            
+            # 部署服务2
             docker pull ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE2_NAME }}:${{ env.VERSION }}
-            
             docker stop ${{ env.SERVICE2_NAME }} || true
             docker rm ${{ env.SERVICE2_NAME }} || true
-            
             docker run -d \
               --name ${{ env.SERVICE2_NAME }} \
               --restart always \
               -p ${{ env.SERVICE2_PORT }}:${{ env.SERVICE2_PORT }} \
               -e SPRING_PROFILES_ACTIVE=${{ env.SERVICE2_ACTIVE }} \
               ${{ env.ACR_DOMAIN }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE2_NAME }}:${{ env.VERSION }}
-
-            echo "========== 两个微服务部署完成！ =========="

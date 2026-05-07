@@ -1,12 +1,8 @@
 FROM eclipse-temurin:21-jre
-
 WORKDIR /app
 
-ARG JAR_FILE
-ARG SERVICE_PORT=8080
-
-COPY ${JAR_FILE} app.jar
-
-EXPOSE ${SERVICE_PORT}
+# 接收外部传入的 JAR 路径
+ARG JAR_PATH
+COPY ${JAR_PATH} app.jar
 
 ENTRYPOINT ["java","-jar","app.jar"]
