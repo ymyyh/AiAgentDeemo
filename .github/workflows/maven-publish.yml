@@ -1,24 +1,18 @@
-name: Publish package to the Maven Central Repository and GitHub Packages
+name: Build and Deploy Microservices
 on:
   push:
     branches:
-      - master
+      - main
 jobs:
-  publish:
+  deploy:
     runs-on: ubuntu-latest
     env:
-      # 应用核心配置
-      APP_NAME: aiagent-core
-      SERVICE_PORT: 8081
       RUNNING_ACTIVE: prod
-      # 目录配置
-      LOG_DIR: /home/app/aiagent-core/logs
-      CONFIG_DIR: /home/conf/aiagent-core
-      SHELL_RUN_DIR: /home/run
-      # 阿里云ACR配置
       ACR_DOMAIN: crpi-eh17ftr3tyc2lrwq.cn-hangzhou.personal.cr.aliyuncs.com
       ACR_ZONE: aiagent-deemo
       VERSION: ${{ github.sha }}
+      SHELL_RUN_DIR: /home/run
+      DOCKER_NETWORK: aiagent-network
 
     permissions:
       contents: read
@@ -26,32 +20,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # 登录阿里云ACR镜像仓库
+      - name: Build Maven packages
+        run: mvn -B -DskipTests package
+
       - name: Login to Aliyun Container Registry (ACR)
         uses: aliyun/acr-login@v1
         with:
-          login-server: crpi-eh17ftr3tyc2lrwq.cn-hangzhou.personal.cr.aliyuncs.com
+          login-server: ${{ env.ACR_DOMAIN }}
           region-id: cn-hangzhou
           username: ${{ secrets.ALIYUN_DOCKER_REGISTER_USERNAME }}
           password: ${{ secrets.ALIYUN_DOCKER_REGISTER_PASSWORD }}
 
-      # 构建并推送镜像到阿里云ACR
-      - name: Build and Push Docker Image to ACR
+      - name: Build and push Docker images
         run: |
-          docker build -t ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }} .
-          docker push ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }}
-          # 打latest标签方便后续固定拉取
-          docker tag ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }} \
-                     ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:latest
-          docker push ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:latest
+          set -euo pipefail
 
-      # SSH连接阿里云ECS部署应用
+          services=(
+            "aiagent-core|AiAgent-core|8081"
+            "aiagent-mcp|AiAgent-mcp|8082"
+          )
+
+          for service in "${services[@]}"; do
+            IFS='|' read -r app_name module_name service_port <<< "$service"
+            image="${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${app_name}:${{ env.VERSION }}"
+            latest_image="${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${app_name}:latest"
+            jar_file="${module_name}/target/${module_name}-0.0.1-SNAPSHOT.jar"
+
+            docker build \
+              --build-arg JAR_FILE="${jar_file}" \
+              --build-arg SERVICE_PORT="${service_port}" \
+              -t "${image}" \
+              -t "${latest_image}" \
+              .
+
+            docker push "${image}"
+            docker push "${latest_image}"
+          done
+
       - name: Deploy to remote server
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -59,41 +70,73 @@ jobs:
           username: ${{ secrets.ALIYUN_REMOTE_USER }}
           password: ${{ secrets.ALIYUN_REMOTE_PASSWORD }}
           script: |
-            # 初始化本地目录
-            mkdir -p /home/run
-            mkdir -p ${{ env.LOG_DIR }}
-            mkdir -p ${{ env.CONFIG_DIR }}
-            
-            chmod 755 /home/run
-            chmod 755 ${{ env.LOG_DIR }}
-            chmod 755 ${{ env.CONFIG_DIR }}
-            
-            # 拉取最新镜像
-            docker pull ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }}
+            set -e
 
-            # 生成启动脚本
-            mkdir -p ${{ env.SHELL_RUN_DIR }}
-            START_SCRIPT="${{ env.SHELL_RUN_DIR }}/docker_run_${{ env.APP_NAME }}_${{ env.RUNNING_ACTIVE }}.sh"
-            cat > $START_SCRIPT <<EOL
+            ACR_IMAGE="${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}"
+            VERSION="${{ env.VERSION }}"
+            RUNNING_ACTIVE="${{ env.RUNNING_ACTIVE }}"
+            SHELL_RUN_DIR="${{ env.SHELL_RUN_DIR }}"
+            DOCKER_NETWORK="${{ env.DOCKER_NETWORK }}"
+
+            mkdir -p "${SHELL_RUN_DIR}"
+            chmod 755 "${SHELL_RUN_DIR}"
+
+            echo "${{ secrets.ALIYUN_DOCKER_REGISTER_PASSWORD }}" | docker login "${{ env.ACR_DOMAIN }}" \
+              --username "${{ secrets.ALIYUN_DOCKER_REGISTER_USERNAME }}" \
+              --password-stdin
+
+            docker network create "${DOCKER_NETWORK}" || true
+
+            deploy_service() {
+              app_name="$1"
+              service_port="$2"
+              log_dir="/home/app/${app_name}/logs"
+              config_dir="/home/conf/${app_name}"
+              image="${ACR_IMAGE}/${app_name}:${VERSION}"
+              start_script="${SHELL_RUN_DIR}/docker_run_${app_name}_${RUNNING_ACTIVE}.sh"
+
+              mkdir -p "${log_dir}" "${config_dir}"
+              chmod 755 "${log_dir}" "${config_dir}"
+
+              docker pull "${image}"
+
+              cat > "${start_script}" <<EOL
             #!/bin/bash
-            echo "==================== 停止旧容器 ===================="
-            docker stop ${{ env.APP_NAME }} || true
-            docker rm ${{ env.APP_NAME }} || true
-            # 清理无用镜像释放空间
+            set -e
+            echo "==================== 停止旧应用容器：${app_name} ===================="
+            docker stop ${app_name} || true
+            docker rm ${app_name} || true
+
+            echo "==================== 启动应用容器：${app_name} ===================="
+            docker run -d \\
+              --name ${app_name} \\
+              --restart always \\
+              --network ${DOCKER_NETWORK} \\
+              -p ${service_port}:${service_port} \\
+              -v ${log_dir}:/logs \\
+              -v ${config_dir}:/config \\
+              -e "SPRING_PROFILES_ACTIVE=${RUNNING_ACTIVE}" \\
+              -e "SERVER_PORT=${service_port}" \\
+            EOL
+
+              if [ "${app_name}" = "aiagent-core" ]; then
+                cat >> "${start_script}" <<EOL
+              ${image} \\
+              --spring.ai.mcp.client.sse.connections.stock-mcp.url=http://aiagent-mcp:8082
+            EOL
+              else
+                cat >> "${start_script}" <<EOL
+              ${image}
+            EOL
+              fi
+
+              chmod +x "${start_script}"
+              echo "启动脚本已生成：${start_script}"
+              bash "${start_script}"
+            }
+
+            deploy_service "aiagent-mcp" "8082"
+            deploy_service "aiagent-core" "8081"
+
             docker image prune -f
             docker builder prune -f
-            
-            echo "==================== 启动新容器 ===================="
-            docker run -itd \
-              --name ${{ env.APP_NAME }} \
-              --restart always \
-              -p ${{ env.SERVICE_PORT }}:${{ env.SERVICE_PORT }} \
-              -v ${{ env.LOG_DIR }}:/logs \
-              -v ${{ env.CONFIG_DIR }}:/config \
-              -e "SPRING_PROFILES_ACTIVE=${{ env.RUNNING_ACTIVE }}" \
-              ${{ env.ACR_DOMAIN }}/${{ env.ACR_ZONE }}/${{ env.APP_NAME }}:${{ env.VERSION }}
-            EOL
-            
-            chmod +x $START_SCRIPT
-            echo "启动脚本生成完成：$START_SCRIPT"
-            bash $START_SCRIPT
