@@ -62,11 +62,21 @@ public class FreeStockMcpTool {
         try {
             String keyword = URLEncoder.encode(stockName, StandardCharsets.UTF_8);
             String url = UriComponentsBuilder.fromHttpUrl("https://smartbox.gtimg.cn/s3")
-                    .queryParam("q", keyword)
+                    .queryParam("q", stockName)
                     .queryParam("t", "all")
+                    .queryParam("t", "all")
+                    .encode(StandardCharsets.UTF_8)
                     .toUriString();
 
             String resp = restTemplate.getForObject(url, String.class);
+            if (resp == null || resp.isBlank()) {
+                return "名称匹配接口无返回";
+            }
+            String trimmed = resp.stripLeading();
+            if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+                log.warn("smartbox 非 JSON 响应，前 120 字符: {}", trimmed.substring(0, Math.min(120, trimmed.length())));
+                return "名称匹配接口返回异常（非 JSON），请稍后重试";
+            }
             JSONObject json = JSON.parseObject(resp);
             JSONArray arr = json.getJSONArray("items");
             if (arr == null || arr.isEmpty()) {
