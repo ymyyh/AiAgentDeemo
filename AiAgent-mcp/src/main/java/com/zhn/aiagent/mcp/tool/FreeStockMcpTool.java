@@ -1,8 +1,5 @@
 package com.zhn.aiagent.mcp.tool;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
@@ -11,15 +8,20 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class FreeStockMcpTool {
+
+    /**
+     * 例如：{@code v_hint="sh~600519~...~..."}，无匹配时为 {@code v_hint="N"}。
+     */
+    private static final Pattern V_HINT_PATTERN = Pattern.compile("v_hint\\s*=\\s*\"([^\"]*)\"");
 
     private final RestTemplate restTemplate;
 
@@ -60,43 +62,51 @@ public class FreeStockMcpTool {
             @ToolParam(description = "股票中文名称，如：贵州茅台、特斯拉") String stockName
     ) {
         try {
-            String keyword = URLEncoder.encode(stockName, StandardCharsets.UTF_8);
-            String url = UriComponentsBuilder.fromHttpUrl("https://smartbox.gtimg.cn/s3")
-                    .queryParam("q", stockName)
+            // 路径带末尾 /、仅用 UriComponentsBuilder 编码 q，避免双重编码触发服务端 301/HTML
+            String url = UriComponentsBuilder.fromHttpUrl("https://smartbox.gtimg.cn/s3/")
+                    .queryParam("q", stockName.trim())
                     .queryParam("t", "all")
-                    .queryParam("t", "all")
-                    .encode(StandardCharsets.UTF_8)
+                    .build()
                     .toUriString();
 
             String resp = restTemplate.getForObject(url, String.class);
             if (resp == null || resp.isBlank()) {
                 return "名称匹配接口无返回";
             }
-            String trimmed = resp.stripLeading();
-            if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-                log.warn("smartbox 非 JSON 响应，前 120 字符: {}", trimmed.substring(0, Math.min(120, trimmed.length())));
-                return "名称匹配接口返回异常（非 JSON），请稍后重试";
+
+            String tencentCode = parseTencentCodeFromVHint(resp);
+            if (tencentCode == null) {
+                log.warn("smartbox 响应中未解析到 v_hint，前 160 字符: {}",
+                        resp.substring(0, Math.min(160, resp.length())));
+                return "名称匹配接口返回格式异常";
             }
-            JSONObject json = JSON.parseObject(resp);
-            JSONArray arr = json.getJSONArray("items");
-            if (arr == null || arr.isEmpty()) {
+            if (tencentCode.isEmpty()) {
                 return "未匹配到该股票";
             }
-
-            JSONObject first = arr.getJSONObject(0);
-            String market = first.getString("market");
-            String code = first.getString("code");
-            String prefix = switch (market) {
-                case "sh" -> "sh";
-                case "sz" -> "sz";
-                case "us" -> "us";
-                default -> "";
-            };
-            return prefix + code;
+            return tencentCode;
         } catch (Exception e) {
             log.error("股票名称匹配失败", e);
             return "名称匹配异常";
         }
+    }
+
+    /**
+     * @return 解析到的腾讯代码（如 sh600519）；{@code v_hint="N"} 返回空串；未匹配到 v_hint 返回 {@code null}
+     */
+    static String parseTencentCodeFromVHint(String responseBody) {
+        Matcher m = V_HINT_PATTERN.matcher(responseBody);
+        if (!m.find()) {
+            return null;
+        }
+        String inner = m.group(1);
+        if ("N".equals(inner) || inner.isEmpty()) {
+            return "";
+        }
+        String[] seg = inner.split("~", -1);
+        if (seg.length < 2 || seg[0].isBlank() || seg[1].isBlank()) {
+            return null;
+        }
+        return seg[0] + seg[1];
     }
 
     @Tool(description = "传入腾讯标准股票代码（sh600519/sz000001/usAAPL），获取个股完整行情数据用于技术分析")
